@@ -1,10 +1,5 @@
 ﻿using POGOProtos.Enums;
 using PokemonGoGUI.Enums;
-using System;
-using System.Collections.Generic;
-using System.Linq;
-using System.Text;
-using System.Threading.Tasks;
 
 namespace PokemonGoGUI.Models
 {
@@ -15,14 +10,14 @@ namespace PokemonGoGUI.Models
         public TransferType Type { get; set; }
         public int KeepMax { get; set; }
         public int MinCP { get; set; }
-        public int CPPercent { get; set; }
+        public int IVPercent { get; set; }
         public TransferSetting()
         {
             Id = PokemonId.Missingno;
             Type = TransferType.KeepStrongestX;
             KeepMax = 1;
             MinCP = 0;
-            CPPercent = 80;
+            IVPercent = 80;
         }
 
         public string Name

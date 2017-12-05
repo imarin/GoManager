@@ -1,18 +1,12 @@
-﻿using PokemonGo.RocketAPI;
-using PokemonGo.RocketAPI.Enums;
-using PokemonGoGUI.Enums;
+﻿using PokemonGoGUI.Enums;
 using PokemonGoGUI.Extensions;
 using PokemonGoGUI.GoManager;
 using PokemonGoGUI.Models;
 using System;
 using System.Collections.Generic;
-using System.ComponentModel;
-using System.Data;
 using System.Drawing;
-using System.IO;
+using System.Globalization;
 using System.Linq;
-using System.Text;
-using System.Threading.Tasks;
 using System.Windows.Forms;
 
 namespace PokemonGoGUI.UI
@@ -64,6 +58,18 @@ namespace PokemonGoGUI.UI
 
         private void AccountSettingsForm_Load(object sender, EventArgs e)
         {
+            this.Icon = Icon.ExtractAssociatedIcon(Application.ExecutablePath);
+
+            foreach (AccountState state in Enum.GetValues(typeof(AccountState)))
+            {
+                if(state == AccountState.Good)
+                {
+                    continue;
+                }
+
+                comboBoxMinAccountState.Items.Add(state);
+            }
+
             UpdateDetails(_manager.UserSettings);
 
             UpdateListViews();
@@ -107,6 +113,63 @@ namespace PokemonGoGUI.UI
             checkBoxCatchPokemon.Checked = settings.CatchPokemon;
             checkBoxSnipePokemon.Checked = settings.SnipePokemon;
             numericUpDownSnipeAfterStops.Value = settings.SnipeAfterPokestops;
+            numericUpDownMinBallsToSnipe.Value = settings.MinBallsToSnipe;
+            numericUpDownMaxPokemonPerSnipe.Value = settings.MaxPokemonPerSnipe;
+            numericUpDownSnipeAfterLevel.Value = settings.SnipeAfterLevel;
+            numericUpDownRunForHours.Value = new Decimal(settings.RunForHours);
+            numericUpDownMaxLogs.Value = settings.MaxLogs;
+            numericUpDownMaxFailBeforeReset.Value = settings.MaxFailBeforeReset;
+            checkBoxStopOnIPBan.Checked = settings.StopOnIPBan;
+            checkBoxAutoRotateProxies.Checked = settings.AutoRotateProxies;
+            checkBoxRemoveOnStop.Checked = settings.AutoRemoveOnStop;
+            checkBoxClaimLevelUp.Checked = settings.ClaimLevelUpRewards;
+            numericUpDownSearchFortBelow.Value = new Decimal(settings.SearchFortBelowPercent);
+            numericUpDownForceEvolveAbove.Value = new Decimal(settings.ForceEvolveAbovePercent);
+            checkBoxStopOnAPIUpdate.Checked = settings.StopOnAPIUpdate;
+
+            //Humanization
+            checkBoxHumanizeThrows.Checked = settings.EnableHumanization;
+            numericUpDownInsideReticuleChance.Value = settings.InsideReticuleChance;
+
+            numericUpDownGeneralDelay.Value = settings.GeneralDelay;
+            numericUpDownGeneralDelayRandom.Value = settings.GeneralDelayRandom;
+
+            numericUpDownDelayBetweenSnipes.Value = settings.DelayBetweenSnipes;
+            numericUpDownDelayBetweenSnipeRandom.Value = settings.BetweenSnipesDelayRandom;
+
+            numericUpDownLocationUpdateDelay.Value = settings.DelayBetweenLocationUpdates;
+            numericUpDownLocationUpdateRandom.Value = settings.LocationupdateDelayRandom;
+
+            numericUpDownPlayerActionDelay.Value = settings.DelayBetweenPlayerActions;
+            numericUpDownPlayerActionRandomiz.Value = settings.PlayerActionDelayRandom;
+
+            numericUpDownWalkingOffset.Value = new Decimal(settings.WalkingSpeedOffset);
+            //End humanization
+
+            //Device settings
+            textBoxDeviceId.Text = settings.DeviceId;
+            textBoxDeviceModel.Text = settings.DeviceModel;
+            textBoxDeviceBrand.Text = settings.DeviceBrand;
+            textBoxDeviceModelBoot.Text = settings.DeviceModelBoot;
+            textBoxDeviceModelIdentifier.Text = settings.DeviceModelIdentifier;
+            textBoxFirmwareBrand.Text = settings.FirmwareBrand;
+            textBoxFirmwareFingerprint.Text = settings.FirmwareFingerprint;
+            textBoxFirmwareTags.Text = settings.FirmwareTags;
+            textBoxFirmwareType.Text = settings.FirmwareType;
+            textBoxAnroidBoardName.Text = settings.AndroidBoardName;
+            textBoxAndroidBootLoader.Text = settings.AndroidBootloader;
+            textBoxHardwareManufacturer.Text = settings.HardwareManufacturer;
+            textBoxHardwareModel.Text = settings.HardwareModel;
+            //End device settings
+
+            for(int i = 0; i < comboBoxMinAccountState.Items.Count; i++)
+            {
+                if((AccountState)comboBoxMinAccountState.Items[i] == settings.StopAtMinAccountState)
+                {
+                    comboBoxMinAccountState.SelectedIndex = i;
+                    break;
+                }
+            }
         }
 
         private void radioButtonPtc_CheckedChanged_1(object sender, EventArgs e)
@@ -136,9 +199,10 @@ namespace PokemonGoGUI.UI
 
         private void buttonSave_Click(object sender, EventArgs e)
         {
-            SaveSettings();
-
-            MessageBox.Show("Settings saved.\nSome settings won't take effect until the account stops running.");
+            if (SaveSettings())
+            {
+                MessageBox.Show("Settings saved.\nSome settings won't take effect until the account stops running.", "Info");
+            }
         }
 
         private bool SaveSettings()
@@ -155,43 +219,55 @@ namespace PokemonGoGUI.UI
 
             if (!Int32.TryParse(textBoxMaxLevel.Text, out maxLevel) || maxLevel < 0)
             {
-                MessageBox.Show("Invalid Max level");
+                MessageBox.Show("Invalid Max level", "Warning");
                 return false;
             }
 
             if (!Int32.TryParse(textBoxPokemonBeforeEvolve.Text, out minPokemonBeforeEvolve) || minPokemonBeforeEvolve < 0)
             {
-                MessageBox.Show("Invalid pokemon before evolve");
+                MessageBox.Show("Invalid pokemon before evolve", "Warning");
                 return false;
             }
 
             if (!Int32.TryParse(textBoxWalkSpeed.Text, out walkingSpeed) || walkingSpeed <= 0)
             {
-                MessageBox.Show("Invalid walking speed");
+                MessageBox.Show("Invalid walking speed", "Warning");
                 return false;
             }
 
             if (!Int32.TryParse(textBoxMaxTravelDistance.Text, out maxTravelDistance) || maxTravelDistance <= 0)
             {
-                MessageBox.Show("Invalid max travel distance");
+                MessageBox.Show("Invalid max travel distance", "Warning");
                 return false;
             }
 
-            if (!Double.TryParse(textBoxLat.Text, out defaultLat))
+            if (!Double.TryParse(textBoxLat.Text.Replace(",", "."), NumberStyles.Any, CultureInfo.InvariantCulture, out defaultLat))
             {
-                MessageBox.Show("Invalid latitude");
+                MessageBox.Show("Invalid latitude", "Warning");
                 return false;
             }
 
-            if (!Double.TryParse(textBoxLong.Text, out defaultLong))
+            if (!Double.TryParse(textBoxLong.Text.Replace(",", "."), NumberStyles.Any, CultureInfo.InvariantCulture, out defaultLong))
             {
-                MessageBox.Show("Invalid longitude");
+                MessageBox.Show("Invalid longitude", "Warning");
                 return false;
             }
 
             if (!String.IsNullOrEmpty(textBoxProxy.Text) && !ProxyEx.TryParse(textBoxProxy.Text, out proxyEx))
             {
-                MessageBox.Show("Invalid proxy format");
+                MessageBox.Show("Invalid proxy format", "Warning");
+                return false;
+            }
+
+            if (comboBoxMinAccountState.SelectedItem == null)
+            {
+                MessageBox.Show("Please select a valid min account state", "Warning");
+                return false;
+            }
+
+            if (walkingSpeed < (double)numericUpDownWalkingOffset.Value)
+            {
+                MessageBox.Show("Walking offset must be more than walking speed", "Warning");
                 return false;
             }
 
@@ -204,9 +280,10 @@ namespace PokemonGoGUI.UI
                 userSettings.AuthType = AuthType.Google;
             }
 
+
             userSettings.MimicWalking = checkBoxMimicWalking.Checked;
-            userSettings.PtcUsername = textBoxPtcUsername.Text;
-            userSettings.PtcPassword = textBoxPtcPassword.Text;
+            userSettings.PtcUsername = textBoxPtcUsername.Text.Trim();
+            userSettings.PtcPassword = textBoxPtcPassword.Text.Trim();
             userSettings.DefaultLatitude = defaultLat;
             userSettings.DefaultLongitude = defaultLong;
             userSettings.WalkingSpeed = walkingSpeed;
@@ -223,6 +300,56 @@ namespace PokemonGoGUI.UI
             userSettings.CatchPokemon = checkBoxCatchPokemon.Checked;
             userSettings.SnipePokemon = checkBoxSnipePokemon.Checked;
             userSettings.SnipeAfterPokestops = (int)numericUpDownSnipeAfterStops.Value;
+            userSettings.MinBallsToSnipe = (int)numericUpDownMinBallsToSnipe.Value;
+            userSettings.MaxPokemonPerSnipe = (int)numericUpDownMaxPokemonPerSnipe.Value;
+            userSettings.SnipeAfterLevel = (int)numericUpDownSnipeAfterLevel.Value;
+            userSettings.StopAtMinAccountState = (AccountState)comboBoxMinAccountState.SelectedItem;
+            userSettings.SearchFortBelowPercent = (double)numericUpDownSearchFortBelow.Value;
+            userSettings.ForceEvolveAbovePercent = (double) numericUpDownForceEvolveAbove.Value;
+            userSettings.ClaimLevelUpRewards = checkBoxClaimLevelUp.Checked;
+            userSettings.StopOnAPIUpdate = checkBoxStopOnAPIUpdate.Checked;
+
+            userSettings.RunForHours = (double)numericUpDownRunForHours.Value;
+            userSettings.MaxLogs = (int)numericUpDownMaxLogs.Value;
+            userSettings.StopOnIPBan = checkBoxStopOnIPBan.Checked;
+            userSettings.MaxFailBeforeReset = (int)numericUpDownMaxFailBeforeReset.Value;
+            userSettings.AutoRotateProxies = checkBoxAutoRotateProxies.Checked;
+            userSettings.AutoRemoveOnStop = checkBoxRemoveOnStop.Checked;
+
+            //Humanization
+            userSettings.EnableHumanization = checkBoxHumanizeThrows.Checked;
+            userSettings.InsideReticuleChance = (int)numericUpDownInsideReticuleChance.Value;
+
+            userSettings.GeneralDelay = (int)numericUpDownGeneralDelay.Value;
+            userSettings.GeneralDelayRandom = (int)numericUpDownGeneralDelayRandom.Value;
+
+            userSettings.DelayBetweenSnipes = (int)numericUpDownDelayBetweenSnipes.Value;
+            userSettings.BetweenSnipesDelayRandom = (int)numericUpDownDelayBetweenSnipeRandom.Value;
+
+            userSettings.DelayBetweenLocationUpdates = (int)numericUpDownLocationUpdateDelay.Value;
+            userSettings.LocationupdateDelayRandom = (int)numericUpDownLocationUpdateRandom.Value;
+
+            userSettings.DelayBetweenPlayerActions = (int)numericUpDownPlayerActionDelay.Value;
+            userSettings.PlayerActionDelayRandom = (int)numericUpDownPlayerActionRandomiz.Value;
+
+            userSettings.WalkingSpeedOffset = (double)numericUpDownWalkingOffset.Value;
+            //End humanization
+
+            //Device settings
+            userSettings.DeviceId = textBoxDeviceId.Text;
+            userSettings.DeviceModel = textBoxDeviceModel.Text;
+            userSettings.DeviceBrand = textBoxDeviceBrand.Text;
+            userSettings.DeviceModelBoot = textBoxDeviceModelBoot.Text;
+            userSettings.DeviceModelIdentifier = textBoxDeviceModelIdentifier.Text;
+            userSettings.FirmwareBrand = textBoxFirmwareBrand.Text;
+            userSettings.FirmwareFingerprint = textBoxFirmwareFingerprint.Text;
+            userSettings.FirmwareTags = textBoxFirmwareTags.Text;
+            userSettings.FirmwareType = textBoxFirmwareType.Text;
+            userSettings.AndroidBoardName = textBoxAnroidBoardName.Text;
+            userSettings.AndroidBootloader = textBoxAndroidBootLoader.Text;
+            userSettings.HardwareManufacturer = textBoxHardwareManufacturer.Text;
+            userSettings.HardwareModel = textBoxHardwareModel.Text;
+            //End device settings
 
             if (proxyEx != null)
             {
@@ -410,7 +537,7 @@ namespace PokemonGoGUI.UI
 
             if(!Int32.TryParse(cp, out changeCp) || changeCp < 0)
             {
-                MessageBox.Show("Invalid amount");
+                MessageBox.Show("Invalid amount", "Warning");
 
                 return;
             }
@@ -512,6 +639,11 @@ namespace PokemonGoGUI.UI
 
         private async void buttonExportConfig_Click(object sender, EventArgs e)
         {
+            if(!SaveSettings())
+            {
+                return;
+            }
+
             using (SaveFileDialog sfd = new SaveFileDialog())
             {
                 sfd.Filter = "Json Files (*.json)|*.json|All Files (*.*)|*.*";
@@ -525,7 +657,7 @@ namespace PokemonGoGUI.UI
 
                 if (result.Success)
                 {
-                    MessageBox.Show("Config exported");
+                    MessageBox.Show("Config exported", "Info");
                 }
             }
         }
@@ -557,6 +689,30 @@ namespace PokemonGoGUI.UI
         private void checkBoxSnipePokemon_CheckedChanged(object sender, EventArgs e)
         {
             numericUpDownSnipeAfterStops.Enabled = checkBoxSnipePokemon.Checked;
+            numericUpDownMinBallsToSnipe.Enabled = checkBoxSnipePokemon.Checked;
+            numericUpDownMaxPokemonPerSnipe.Enabled = checkBoxSnipePokemon.Checked;
+            numericUpDownSnipeAfterLevel.Enabled = checkBoxSnipePokemon.Checked;
+        }
+
+        private void buttonDeviceRandom_Click(object sender, EventArgs e)
+        {
+            _manager.RandomDeviceId();
+
+            textBoxDeviceId.Text = _manager.UserSettings.DeviceId;
+
+            //UpdateDetails(_manager.UserSettings);
+        }
+
+        private void buttonResetDefaults_Click(object sender, EventArgs e)
+        {
+            _manager.RestoreDeviceDefaults();
+
+            UpdateDetails(_manager.UserSettings);
+        }
+
+        private void checkBoxAutoRotateProxies_CheckedChanged(object sender, EventArgs e)
+        {
+            checkBoxRemoveOnStop.Enabled = checkBoxAutoRotateProxies.Checked;
         }
     }
 }

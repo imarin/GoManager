@@ -2,12 +2,8 @@
 using PokemonGoGUI.Models;
 using System;
 using System.Collections.Generic;
-using System.ComponentModel;
-using System.Data;
 using System.Drawing;
 using System.Linq;
-using System.Text;
-using System.Threading.Tasks;
 using System.Windows.Forms;
 
 namespace PokemonGoGUI.UI
@@ -31,12 +27,14 @@ namespace PokemonGoGUI.UI
                 setting.MinCP = (int)numericUpDownMinCP.Value;
                 setting.KeepMax = (int)numericUpDownKeepMax.Value;
                 setting.Type = (TransferType)comboBoxTransferType.SelectedItem;
-                setting.CPPercent = (int)numericUpDownIVPercent.Value;
+                setting.IVPercent = (int)numericUpDownIVPercent.Value;
             }
         }
         
         private void TransferSettingsForm_Load(object sender, EventArgs e)
         {
+            this.Icon = Icon.ExtractAssociatedIcon(Application.ExecutablePath);
+
             foreach (TransferType setting in Enum.GetValues(typeof(TransferType)))
             {
                 comboBoxTransferType.Items.Add(setting);
@@ -61,7 +59,7 @@ namespace PokemonGoGUI.UI
 
             numericUpDownKeepMax.Value = setting.KeepMax;
             numericUpDownMinCP.Value = setting.MinCP;
-            numericUpDownIVPercent.Value = setting.CPPercent;
+            numericUpDownIVPercent.Value = setting.IVPercent;
             checkBoxTransfer.Checked = setting.Transfer;
         }
 
@@ -95,6 +93,10 @@ namespace PokemonGoGUI.UI
                     numericUpDownIVPercent.Enabled = true;
                     break;
                 case TransferType.BelowCPOrIVAmount:
+                    numericUpDownIVPercent.Enabled = true;
+                    numericUpDownMinCP.Enabled = true;
+                    break;
+                case TransferType.BelowCPAndIVAmount:
                     numericUpDownIVPercent.Enabled = true;
                     numericUpDownMinCP.Enabled = true;
                     break;

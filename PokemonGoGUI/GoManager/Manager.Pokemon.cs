@@ -1,10 +1,11 @@
-﻿using POGOProtos.Data;
+﻿using Google.Protobuf;
+using POGOProtos.Data;
 using POGOProtos.Enums;
 using POGOProtos.Inventory;
+using POGOProtos.Networking.Requests;
+using POGOProtos.Networking.Requests.Messages;
 using POGOProtos.Networking.Responses;
 using POGOProtos.Settings.Master;
-using PokemonGo.RocketAPI;
-using PokemonGo.RocketAPI.Helpers;
 using PokemonGoGUI.Enums;
 using PokemonGoGUI.Extensions;
 using PokemonGoGUI.GoManager.Models;
@@ -12,7 +13,6 @@ using PokemonGoGUI.Models;
 using System;
 using System.Collections.Generic;
 using System.Linq;
-using System.Text;
 using System.Threading.Tasks;
 
 namespace PokemonGoGUI.GoManager
@@ -23,36 +23,58 @@ namespace PokemonGoGUI.GoManager
         {
             foreach (PokemonData pokemon in pokemonToTransfer)
             {
+                if(pokemon.Favorite == 1)
+                {
+                    continue;
+                }
+
                 try
                 {
-                    ReleasePokemonResponse releaseResponse = await _client.Inventory.TransferPokemon(pokemon.Id);
+                    var response = await _client.ClientSession.RpcClient.SendRemoteProcedureCallAsync(new Request
+                    {
+                        RequestType = RequestType.ReleasePokemon,
+                        RequestMessage = new ReleasePokemonMessage
+                        {
+                            PokemonId = pokemon.Id
+                            //PokemonIds
+                        }.ToByteString()
+                    });
 
-                    if (releaseResponse.Result != ReleasePokemonResponse.Types.Result.Success)
+                    ReleasePokemonResponse releasePokemonResponse = null;
+
+                    try
                     {
-                        LogCaller(new LoggerEventArgs(String.Format("Failed to transfer pokemon {0}. Response: {1}", pokemon.PokemonId, releaseResponse.Result), LoggerTypes.Warning));
-                    }
-                    else
-                    {
+                        releasePokemonResponse = ReleasePokemonResponse.Parser.ParseFrom(response);
                         LogCaller(new LoggerEventArgs(
                             String.Format("Successully transferred {0}. Cp: {1}. IV: {2:0.00}%",
                                         pokemon.PokemonId,
                                         pokemon.Cp,
                                         CalculateIVPerfection(pokemon).Data),
                                         LoggerTypes.Transfer));
-                    }
 
-                    await Task.Delay(200);
+                        await Task.Delay(CalculateDelay(UserSettings.DelayBetweenPlayerActions, UserSettings.PlayerActionDelayRandom));
+
+                        return new MethodResult
+                        {
+                            Success = true
+                        };
+                    }
+                    catch (Exception ex)
+                    {
+                        if (response.IsEmpty)
+                            LogCaller(new LoggerEventArgs("ReleasePokemonResponse parsing failed because response was empty", LoggerTypes.Exception, ex));
+
+                        return new MethodResult();
+                    }
                 }
                 catch (Exception ex)
                 {
                     LogCaller(new LoggerEventArgs("Transfer request failed", LoggerTypes.Exception, ex));
+                    return new MethodResult();
                 }
             }
 
-            return new MethodResult
-            {
-                Success = true
-            };
+            return new MethodResult();
         }
 
         private async Task<MethodResult> TransferFilteredPokemon()
@@ -76,7 +98,7 @@ namespace PokemonGoGUI.GoManager
             };
         }
 
-        private async Task<MethodResult<List<PokemonData>>> GetPokemonToTransfer()
+        public async Task<MethodResult<List<PokemonData>>> GetPokemonToTransfer()
         {
             if (!UserSettings.TransferPokemon)
             {
@@ -133,7 +155,7 @@ namespace PokemonGoGUI.GoManager
                         pokemonToTransfer.AddRange(GetPokemonBelowCP(group, settings.MinCP));
                         break;
                     case TransferType.BelowIVPercentage:
-                        pokemonToTransfer.AddRange(GetPokemonBelowIVPercent(group, settings.CPPercent));
+                        pokemonToTransfer.AddRange(GetPokemonBelowIVPercent(group, settings.IVPercent));
                         break;
                     case TransferType.KeepPossibleEvolves:
                         pokemonToTransfer.AddRange(GetPokemonByPossibleEvolve(group, settings.KeepMax));
@@ -144,8 +166,11 @@ namespace PokemonGoGUI.GoManager
                     case TransferType.KeepXHighestIV:
                         pokemonToTransfer.AddRange(GetPokemonByIV(group, settings.KeepMax));
                         break;
+                    case TransferType.BelowCPAndIVAmount:
+                        pokemonToTransfer.AddRange(GetPokemonBelowCPIVAmount(group, settings.MinCP, settings.IVPercent));
+                        break;
                     case TransferType.BelowCPOrIVAmount:
-                        pokemonToTransfer.AddRange(GetPokemonBelowIVPercent(group, settings.CPPercent));
+                        pokemonToTransfer.AddRange(GetPokemonBelowIVPercent(group, settings.IVPercent));
                         pokemonToTransfer.AddRange(GetPokemonBelowCP(group, settings.MinCP));
                         pokemonToTransfer = pokemonToTransfer.DistinctBy(x => x.Id).ToList();
                         break;
@@ -158,6 +183,28 @@ namespace PokemonGoGUI.GoManager
                 Message = String.Format("Found {0} pokemon to transfer", pokemonToTransfer.Count),
                 Success = true
             };
+        }
+
+        private List<PokemonData> GetPokemonBelowCPIVAmount(IGrouping<PokemonId, PokemonData> pokemon, int minCp, double percent)
+        {
+            List<PokemonData> toTransfer = new List<PokemonData>();
+
+            foreach (PokemonData pData in pokemon)
+            {
+                MethodResult<double> perfectResult = CalculateIVPerfection(pData);
+
+                if (!perfectResult.Success)
+                {
+                    continue;
+                }
+
+                if (perfectResult.Data >= 0 && perfectResult.Data < percent && pData.Cp < minCp)
+                {
+                    toTransfer.Add(pData);
+                }
+            }
+
+            return toTransfer;
         }
 
         private List<PokemonData> GetPokemonBelowCP(IGrouping<PokemonId, PokemonData> pokemon, int minCp)
@@ -210,7 +257,6 @@ namespace PokemonGoGUI.GoManager
 
             return pokemon.OrderByDescending(x => CalculateIVPerfection(x).Data).ThenByDescending(x => x.Cp).Skip(amount).ToList();
         }
-
 
         private List<PokemonData> GetPokemonByPossibleEvolve(IGrouping<PokemonId, PokemonData> pokemon, int limit)
         {
@@ -282,6 +328,72 @@ namespace PokemonGoGUI.GoManager
                 Message = "Success",
                 Success = true
             };
+        }
+
+        public async Task<MethodResult> FavoritePokemon(IEnumerable<PokemonData> pokemonToFavorite, bool favorite = true)
+        {
+            foreach (PokemonData pokemon in pokemonToFavorite)
+            {
+                bool isFavorited = true;
+                string message = "unfavorited";
+
+                if(pokemon.Favorite == 0)
+                {
+                    isFavorited = false;
+                    message = "favorited";
+                }
+
+                if(isFavorited == favorite)
+                {
+                    continue;
+                }
+
+                try
+                {
+                    var response = await _client.ClientSession.RpcClient.SendRemoteProcedureCallAsync(new Request
+                    {
+                        RequestType = RequestType.SetFavoritePokemon,
+                        RequestMessage = new SetFavoritePokemonMessage
+                        {
+                            PokemonId = (long)pokemon.Id,
+                            IsFavorite = favorite
+                        }.ToByteString()
+                    });
+
+                    SetFavoritePokemonResponse setFavoritePokemonResponse = null;
+
+                    try
+                    {
+                        setFavoritePokemonResponse = SetFavoritePokemonResponse.Parser.ParseFrom(response);
+                        LogCaller(new LoggerEventArgs(
+                            String.Format("Successully {3} {0}. Cp: {1}. IV: {2:0.00}%",
+                                        pokemon.PokemonId,
+                                        pokemon.Cp,
+                                        CalculateIVPerfection(pokemon).Data, message),
+                                        LoggerTypes.Info));
+
+                        await Task.Delay(CalculateDelay(UserSettings.DelayBetweenPlayerActions, UserSettings.PlayerActionDelayRandom));
+
+                        return new MethodResult
+                        {
+                            Success = true
+                        };
+                    }
+                    catch (Exception ex)
+                    {
+                        if (response.IsEmpty)
+                            LogCaller(new LoggerEventArgs("SetFavoritePokemonResponse parsing failed because response was empty", LoggerTypes.Exception, ex));
+
+                        return new MethodResult();
+                    }
+                }
+                catch (Exception ex)
+                {
+                    LogCaller(new LoggerEventArgs("Favorite request failed", LoggerTypes.Exception, ex));
+                    return new MethodResult();
+                }
+            }
+            return new MethodResult();
         }
 
         private double CalculateMaxCpMultiplier(PokemonData poke)

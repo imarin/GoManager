@@ -4,9 +4,8 @@ using POGOProtos.Data.Player;
 using POGOProtos.Enums;
 using POGOProtos.Inventory;
 using POGOProtos.Inventory.Item;
-using POGOProtos.Networking.Responses;
 using POGOProtos.Settings.Master;
-using PokemonGo.RocketAPI;
+using PokemonGoGUI.AccountScheduler;
 using PokemonGoGUI.Enums;
 using PokemonGoGUI.GoManager.Models;
 using PokemonGoGUI.Models;
@@ -14,16 +13,73 @@ using System;
 using System.Collections.Generic;
 using System.Diagnostics;
 using System.Linq;
-using System.Text;
-using System.Threading.Tasks;
 
 namespace PokemonGoGUI.GoManager
 {
     public partial class Manager
     {
-        public Settings UserSettings { get; set; }
-
         public byte[] LogHeaderSettings { get; set; }
+        public AccountState AccountState { get; set; }
+        public Settings UserSettings { get; set; }
+        public Tracker Tracker { get; set; }
+        public Scheduler AccountScheduler { get; set; }
+        public DateTime LastLuckyEgg { get; set; }
+
+        [JsonIgnore]
+        public string SchedulerName
+        {
+            get
+            {
+                if(AccountScheduler == null)
+                {
+                    return String.Empty;
+                }
+
+                return AccountScheduler.Name;
+            }
+        }
+
+        [JsonIgnore]
+        public int PokemonCaught
+        {
+            get
+            {
+                if(Tracker == null)
+                {
+                    return 0;
+                }
+
+                return Tracker.PokemonCaught;
+            }
+        }
+
+        [JsonIgnore]
+        public int PokestopsFarmed
+        {
+            get
+            {
+                if (Tracker == null)
+                {
+                    return 0;
+                }
+
+                return Tracker.PokestopsFarmed;
+            }
+        }
+
+        [JsonIgnore]
+        public string GroupName
+        {
+            get
+            {
+                if (String.IsNullOrEmpty(UserSettings.GroupName))
+                {
+                    return String.Empty;
+                }
+
+                return UserSettings.GroupName;
+            }
+        }
 
         [JsonIgnore]
         public string Proxy
@@ -116,7 +172,7 @@ namespace PokemonGoGUI.GoManager
 
                 lock (Logs)
                 {
-                    string message = Logs.LastOrDefault(x => x.LoggerType != LoggerTypes.LocationUpdate).Message;
+                    string message = Logs.Last().Message;
 
                     if (String.IsNullOrEmpty(message))
                     {
@@ -210,6 +266,34 @@ namespace PokemonGoGUI.GoManager
         }
 
         [JsonIgnore]
+        public string RemainingRunningTime
+        {
+            get
+            {
+                if (MaxRuntime == 0)
+                {
+                    return "Unlimited";
+                }
+
+                double remainingHours = MaxRuntime - _runningStopwatch.Elapsed.TotalHours;
+                TimeSpan time = TimeSpan.FromHours(remainingHours);
+
+
+                if (time.TotalHours < 1)
+                {
+                    return String.Format("{0:0}m {1:00}s", time.Minutes, time.Seconds);
+                }
+
+                if (time.TotalHours >= 24)
+                {
+                    return String.Format("{0:0}d {1:0}h {2:00}m", time.Days, time.Hours, time.Seconds);
+                }
+
+                return String.Format("{0:0}h {1:00}m {2:00}s", time.Hours, time.Minutes, time.Seconds);
+            }
+        }
+
+        [JsonIgnore]
         public string ExpRatio
         {
             get
@@ -282,6 +366,7 @@ namespace PokemonGoGUI.GoManager
             }
         }
 
+        [JsonIgnore]
         public int ExpPerHour
         {
             get
@@ -299,6 +384,7 @@ namespace PokemonGoGUI.GoManager
             }
         }
 
+        [JsonIgnore]
         public string RunningTime
         {
             get
@@ -308,11 +394,43 @@ namespace PokemonGoGUI.GoManager
             }
         }
 
+        [JsonIgnore]
         public int ExpGained
         {
             get
             {
                 return _expGained;
+            }
+        }
+
+        [JsonIgnore]
+        public int TotalPokeStopExp { get; set; }
+
+        [JsonIgnore]
+        public double MaxRuntime
+        {
+            get
+            {
+                if(UserSettings == null)
+                {
+                    return 0;
+                }
+
+                return UserSettings.RunForHours;
+            }
+        }
+
+        [JsonIgnore]
+        public bool LuckyEggActive
+        {
+            get
+            {
+                if(DateTime.Now < LastLuckyEgg.AddMinutes(30))
+                {
+                    return true;
+                }
+
+                return false;
             }
         }
 
@@ -323,6 +441,45 @@ namespace PokemonGoGUI.GoManager
         {
             _expGained += amount;
             Stats.Experience += amount;
+        }
+
+        private int RemainingPokeballs()
+        {
+            int total = 0;
+
+            ItemData data = Items.FirstOrDefault(x => x.ItemId == ItemId.ItemPokeBall);
+
+            if(data != null)
+            {
+                total += data.Count;
+            }
+
+            data = Items.FirstOrDefault(x => x.ItemId == ItemId.ItemGreatBall);
+
+            if (data != null)
+            {
+                total += data.Count;
+            }
+            data = Items.FirstOrDefault(x => x.ItemId == ItemId.ItemUltraBall);
+
+            if (data != null)
+            {
+                total += data.Count;
+            }
+
+            data = Items.FirstOrDefault(x => x.ItemId == ItemId.ItemMasterBall);
+
+            if (data != null)
+            {
+                total += data.Count;
+            }
+
+            return total;
+        }
+
+        private bool HasPokeballsLeft()
+        {
+            return RemainingPokeballs() > 0;
         }
     }
 }

@@ -1,17 +1,17 @@
-﻿using POGOProtos.Data.Battle;
+﻿using GeoCoordinatePortable;
+using Google.Protobuf;
 using POGOProtos.Map;
 using POGOProtos.Map.Fort;
+using POGOProtos.Map.Pokemon;
+using POGOProtos.Networking.Requests;
+using POGOProtos.Networking.Requests.Messages;
 using POGOProtos.Networking.Responses;
-using PokemonGo.RocketAPI.Extensions;
-using PokemonGo.RocketAPI;
+using PokemonGoGUI.Extensions;
+using PokemonGoGUI.GoManager.Models;
 using System;
 using System.Collections.Generic;
 using System.Linq;
-using System.Text;
 using System.Threading.Tasks;
-using System.Device.Location;
-using POGOProtos.Map.Pokemon;
-using PokemonGoGUI.GoManager.Models;
 
 namespace PokemonGoGUI.GoManager
 {
@@ -46,7 +46,7 @@ namespace PokemonGoGUI.GoManager
         {
             MethodResult<List<FortData>> allFortsResponse = await GetAllForts();
 
-            if(!allFortsResponse.Success)
+            if (!allFortsResponse.Success)
             {
                 return allFortsResponse;
             }
@@ -164,28 +164,76 @@ namespace PokemonGoGUI.GoManager
 
         private async Task<MethodResult<List<MapCell>>> GetMapObjects()
         {
-            try
+            TimeSpan secondsSinceLastRequest = DateTime.Now - _lastMapRequest;
+
+            if (secondsSinceLastRequest < TimeSpan.FromSeconds(6))
             {
-                //Only mapobject returns objects
-                var checkAllReponse = await _client.Map.GetMapObjects();
-                GetMapObjectsResponse mapObjectResponse = checkAllReponse.Item1;
+                return new MethodResult<List<MapCell>>
+                {
+                    Data = new List<MapCell>(),
+                    Success = true
+                };
+            }
+
+            await Task.Delay(0);           
+            var cells = _client.ClientSession.Map.Cells.ToList();
+            if (cells.Count > 1)
+            {
+                _lastMapRequest = DateTime.Now;
 
                 return new MethodResult<List<MapCell>>
                 {
-                    Data = mapObjectResponse.MapCells.ToList(),
+                    Data = cells,
                     Message = "Success",
                     Success = true
                 };
             }
-            catch(Exception ex)
+            else
             {
-                LogCaller(new LoggerEventArgs("Failed to get map objects", Models.LoggerTypes.Exception, ex));
-
                 return new MethodResult<List<MapCell>>
                 {
+                    Data = new List<MapCell>(),
                     Message = "Failed to get map objects"
                 };
             }
+            /*/ Retrieve the closest fort to your current player coordinates.
+            var response = await _client.ClientSession.RpcClient.SendRemoteProcedureCallAsync(new Request
+            {
+                RequestType = RequestType.GetMapObjects,
+                RequestMessage = new GetMapObjectsMessage
+                {
+                    //CellId,
+                    Latitude = _client.ClientSession.Player.Latitude,
+                    Longitude = _client.ClientSession.Player.Longitude,
+                    //SinceTimestampMs 
+                }.ToByteString()
+            });
+
+            GetMapObjectsResponse getMapObjectsResponse = null;
+            try
+            {
+                getMapObjectsResponse = GetMapObjectsResponse.Parser.ParseFrom(response);
+                _lastMapRequest = DateTime.Now;
+ 
+                return new MethodResult<List<MapCell>>
+                {
+                    Data = getMapObjectsResponse.MapCells.ToList(),
+                    Message = "Success",
+                    Success = true
+                };
+            }
+            catch (Exception ex)
+            {
+                if (response.IsEmpty)
+                    LogCaller(new LoggerEventArgs("Failed to get map objects", Models.LoggerTypes.Exception, ex));
+
+                return new MethodResult<List<MapCell>>
+                {
+                    Data = new List<MapCell>(),
+                    Message = "Failed to get map objects"
+                };
+            }
+            */
         }
     }
 }

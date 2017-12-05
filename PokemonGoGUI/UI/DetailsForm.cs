@@ -4,25 +4,21 @@ using POGOProtos.Enums;
 using POGOProtos.Inventory;
 using POGOProtos.Inventory.Item;
 using POGOProtos.Settings.Master;
-using PokemonGo.RocketAPI;
-using PokemonGo.RocketAPI.Helpers;
 using PokemonGoGUI.Enums;
+using PokemonGoGUI.Extensions;
 using PokemonGoGUI.GoManager;
 using PokemonGoGUI.GoManager.Models;
-using PokemonGoGUI.Models;
 using System;
 using System.Collections.Generic;
 using System.ComponentModel;
-using System.Data;
 using System.Drawing;
 using System.Linq;
-using System.Text;
 using System.Threading.Tasks;
 using System.Windows.Forms;
 
 namespace PokemonGoGUI.UI
 {
-    public partial class DetailsForm : Form
+    public partial class DetailsForm : System.Windows.Forms.Form
     {
         private Manager _manager; 
         private int _totalLogs = 0;
@@ -85,6 +81,26 @@ namespace PokemonGoGUI.UI
             #endregion
 
             #region Pokemon
+
+           
+            olvColumnPokemonId.AspectGetter = delegate(object x)
+            {
+                PokemonData pokemon = (PokemonData)x;
+
+                return (int)pokemon.PokemonId;
+            };
+
+            olvColumnPokemonFavorite.AspectGetter = delegate(object x)
+            {
+                PokemonData pokemon = (PokemonData)x;
+
+                if(pokemon.Favorite == 1)
+                {
+                    return true;
+                }
+
+                return false;
+            };
 
             olvColumnPokemonRarity.AspectGetter = delegate(object x)
             {
@@ -243,6 +259,8 @@ namespace PokemonGoGUI.UI
 
         private async void DetailsForm_Load(object sender, EventArgs e)
         {
+            this.Icon = Icon.ExtractAssociatedIcon(Application.ExecutablePath);
+
             _totalLogs = _manager.Logs.Count;
 
             if (_manager.LogHeaderSettings != null)
@@ -339,6 +357,7 @@ namespace PokemonGoGUI.UI
             {
                 MessageBox.Show("Failed to login");
             }
+
 
             buttonUpdateStats.Enabled = true;
         }
@@ -593,6 +612,131 @@ namespace PokemonGoGUI.UI
             {
                 fastObjectListViewPokemon.SetObjects(_manager.Pokemon);
             }
+        }
+
+        private void copyToolStripMenuItem_Click(object sender, EventArgs e)
+        {
+            int total = fastObjectListViewLogs.SelectedObjects.Count;
+
+            if(total == 0)
+            {
+                return;
+            }
+
+            string copiedMessage = String.Join(Environment.NewLine, fastObjectListViewLogs.SelectedObjects.Cast<Log>().Select(x => x.ToString()));
+
+            Clipboard.SetText(copiedMessage);
+        }
+
+        private async void exportToolStripMenuItem_Click(object sender, EventArgs e)
+        {
+            using(SaveFileDialog sfd = new SaveFileDialog())
+            {
+                sfd.Filter = "Json Files (*.json)|*.json|All Files (*.*)|*.*";
+
+                if(sfd.ShowDialog() == DialogResult.OK)
+                {
+                    MethodResult result = await _manager.ExportLogs(sfd.FileName);
+
+                    if(result.Success)
+                    {
+                        MessageBox.Show("Logs exported");
+                    }
+                }
+            }
+        }
+
+        private async void setFavoriteToolStripMenuItem_Click(object sender, EventArgs e)
+        {
+            favoriteToolStripMenuItem.Enabled = false;
+
+            await _manager.FavoritePokemon(fastObjectListViewPokemon.SelectedObjects.Cast<PokemonData>(), true);
+            await UpdateDetails();
+
+            favoriteToolStripMenuItem.Enabled = true;
+
+            fastObjectListViewPokemon.SetObjects(_manager.Pokemon);
+
+            MessageBox.Show("Finished favoriting pokemon");
+
+        }
+
+        private async void setUnfavoriteToolStripMenuItem_Click(object sender, EventArgs e)
+        {
+            favoriteToolStripMenuItem.Enabled = false;
+
+            await _manager.FavoritePokemon(fastObjectListViewPokemon.SelectedObjects.Cast<PokemonData>(), false);
+            await UpdateDetails();
+
+            favoriteToolStripMenuItem.Enabled = true;
+
+            fastObjectListViewPokemon.SetObjects(_manager.Pokemon);
+
+            MessageBox.Show("Finished unfavoriting pokemon");
+
+        }
+
+        private async void recycleToolStripMenuItem_Click(object sender, EventArgs e)
+        {
+            string data = Prompt.ShowDialog("Amount to recycle", "Set recycle amount");
+            int amount = 0;
+
+            if(String.IsNullOrEmpty(data) || !Int32.TryParse(data, out amount) || amount <= 0)
+            {
+                return;
+            }
+
+            foreach(ItemData item in fastObjectListViewInventory.SelectedObjects)
+            {
+                int toDelete = amount;
+
+                if(amount > item.Count)
+                {
+                    toDelete = item.Count;
+                }
+
+                await _manager.RecycleItem(item, toDelete);
+
+                await Task.Delay(500);
+            }
+
+            await _manager.UpdateInventory();
+
+            fastObjectListViewInventory.SetObjects(_manager.Items);
+
+            MessageBox.Show("Finished recycling items");
+        }
+
+        private void copyStackTraceToolStripMenuItem_Click(object sender, EventArgs e)
+        {
+            Log log = fastObjectListViewLogs.SelectedObject as Log;
+
+            if(log == null || String.IsNullOrEmpty(log.StackTrace))
+            {
+                return;
+            }
+            
+            Clipboard.SetText(log.StackTrace);
+
+            MessageBox.Show("Stack trace copied");
+        }
+
+        private async void showFutureTransfersToolStripMenuItem_Click(object sender, EventArgs e)
+        {
+            showFutureTransfersToolStripMenuItem.Enabled = false;
+
+            MethodResult<List<PokemonData>> result = await _manager.GetPokemonToTransfer();
+
+            if(result.Success)
+            {
+                fastObjectListViewPokemon.SetObjects(result.Data);
+            }
+            else
+            {
+                MessageBox.Show("Failed to get pokemon to be transfered");
+            }
+
+            showFutureTransfersToolStripMenuItem.Enabled = true;
         }
     }
 }

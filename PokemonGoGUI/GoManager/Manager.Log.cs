@@ -1,8 +1,9 @@
-﻿using PokemonGoGUI.GoManager.Models;
+﻿using PokemonGoGUI.Extensions;
+using PokemonGoGUI.GoManager.Models;
 using System;
 using System.Collections.Generic;
+using System.IO;
 using System.Linq;
-using System.Text;
 using System.Threading.Tasks;
 
 namespace PokemonGoGUI.GoManager
@@ -18,9 +19,9 @@ namespace PokemonGoGUI.GoManager
                     Logs.Add(log);
                 }
 
-                if(Logs.Count >= 100)
+                if(Logs.Count >= UserSettings.MaxLogs)
                 {
-                    IEnumerable<Log> tempLogs = Logs.Reverse<Log>().Take(50);
+                    IEnumerable<Log> tempLogs = Logs.Reverse<Log>().Take(UserSettings.MaxLogs / 4); ;
 
                     Logs = tempLogs.Reverse<Log>().ToList();
                 }
@@ -33,6 +34,37 @@ namespace PokemonGoGUI.GoManager
             {
                 Logs.Clear();
             }
+        }
+
+        public async Task<MethodResult> ExportLogs(string filename)
+        {
+            try
+            {
+                string data = String.Empty;
+
+                lock(Logs)
+                {
+                    data = Serializer.ToJson<List<Log>>(Logs);
+                }
+
+                await Task.Run(() => File.WriteAllText(filename, data));
+
+                return new MethodResult
+                {
+                    Message = "Success",
+                    Success = true
+                };
+            }
+            catch(Exception ex)
+            {
+                LogCaller(new LoggerEventArgs("Failed to export logs", LoggerTypes.Exception, ex));
+
+                return new MethodResult
+                {
+                    Message = ex.Message
+                };
+            }
+
         }
     }
 }

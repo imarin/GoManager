@@ -1,21 +1,16 @@
-﻿using Newtonsoft.Json;
-using System;
-using System.Collections.Generic;
+﻿using System;
 using System.Drawing;
-using System.Linq;
-using System.Text;
-using System.Threading.Tasks;
 
 namespace PokemonGoGUI.GoManager.Models
 {
-    public enum LoggerTypes { Debug, Info, Warning, Exception, PokemonEscape, PokemonFlee, LocationUpdate, Transfer, Evolve, Incubate, Recycle, Success };
+    public enum LoggerTypes { Debug, Info, Warning, Exception, FatalError, PokemonEscape, PokemonFlee, LocationUpdate, Transfer, Evolve, Incubate, Recycle, ProxyIssue, Success };
 
     public class Log
     {
         public LoggerTypes LoggerType { get; private set; }
         public DateTime Date { get; private set; }
         public string Message { get; private set; }
-        //public Exception Exception { get; private set; }
+        public string StackTrace { get; private set; }
         public string ExceptionMessage { get; private set; }
 
         /*
@@ -33,23 +28,32 @@ namespace PokemonGoGUI.GoManager.Models
             }
         }*/
 
-        public Log(LoggerTypes type, string message, string exceptionMessage = null)
+        public Log(LoggerTypes type, string message, Exception exception = null)
         {
             this.LoggerType = type;
             this.Message = message;
             this.Date = DateTime.Now;
-            this.ExceptionMessage = exceptionMessage;
+
+            if (exception != null)
+            {
+                this.StackTrace = exception.StackTrace;
+                this.ExceptionMessage = exception.Message;
+            }
         }
 
         public Color GetLogColor()
         {
             switch (this.LoggerType)
             {
+                case LoggerTypes.FatalError:
+                    return Color.Red;
                 case LoggerTypes.Exception:
                     return Color.Red;
                 case LoggerTypes.Success:
                     return Color.Green;
                 case LoggerTypes.Warning:
+                    return Color.Yellow;
+                case LoggerTypes.ProxyIssue:
                     return Color.Yellow;
                 case LoggerTypes.PokemonFlee:
                     return Color.Salmon;
@@ -72,6 +76,16 @@ namespace PokemonGoGUI.GoManager.Models
             }
 
             return SystemColors.WindowText;
+        }
+
+        public override string ToString()
+        {
+            if (!String.IsNullOrEmpty(ExceptionMessage))
+            {
+                return String.Format("Date: {0} Type: {1} Message: {2} Exception: {3}", Date, LoggerType, Message, ExceptionMessage);
+            }
+
+            return String.Format("Date: {0} Type: {1} Message: {2}", Date, LoggerType, Message);
         }
     }
 }

@@ -1,9 +1,8 @@
 ﻿using POGOProtos.Enums;
 using System;
 using System.Collections.Generic;
+using System.Globalization;
 using System.Linq;
-using System.Text;
-using System.Threading.Tasks;
 
 namespace PokemonGoGUI.Models
 {
@@ -24,9 +23,13 @@ namespace PokemonGoGUI.Models
                 string tLat = coords.Split(',').First();
                 double lat = 0;
 
-                if(!Double.TryParse(tLat, out lat))
+                try
                 {
-                    return 0;
+                    lat = Double.Parse(tLat, CultureInfo.InvariantCulture);
+                }
+                catch
+                {
+                    //meh
                 }
 
                 return lat;
@@ -40,9 +43,13 @@ namespace PokemonGoGUI.Models
                 string tLong = coords.Split(',').Last();
                 double lon = 0;
 
-                if (!Double.TryParse(tLong, out lon))
+                try
                 {
-                    return 0;
+                    lon = Double.Parse(tLong, CultureInfo.InvariantCulture);
+                }
+                catch
+                {
+                    //meh
                 }
 
                 return lon;

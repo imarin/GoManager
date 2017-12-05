@@ -1,16 +1,14 @@
 ﻿using POGOProtos.Enums;
 using POGOProtos.Map.Pokemon;
 using POGOProtos.Networking.Responses;
-using PokemonGo.RocketAPI;
 using PokemonGoGUI.Extensions;
 using PokemonGoGUI.GoManager.Models;
 using PokemonGoGUI.Models;
+using PokemonGoGUI.Snipers;
 using System;
 using System.Collections.Generic;
-using System.Device.Location;
+using GeoCoordinatePortable;
 using System.Linq;
-using System.Net;
-using System.Text;
 using System.Threading.Tasks;
 
 namespace PokemonGoGUI.GoManager
@@ -23,20 +21,9 @@ namespace PokemonGoGUI.GoManager
         {
             try
             {
-                using(WebClient wc = new WebClient())
-                {
-                    string response = wc.DownloadString("http://pokesnipers.com/api/v1/pokemon.json");
-
-                    PokeSniperObject pkObject = Serializer.FromJson<PokeSniperObject>(response);
-
-                    return new MethodResult<PokeSniperObject>
-                    {
-                        Data = pkObject,
-                        Success = true
-                    };
-                }
+                return PokeSniper.RequestPokemon();
             }
-            catch(Exception ex)
+            catch (Exception ex)
             {
                 LogCaller(new LoggerEventArgs("Failed to request PokeSniper website", LoggerTypes.Warning, ex));
 
@@ -46,6 +33,16 @@ namespace PokemonGoGUI.GoManager
 
         public async Task<MethodResult> SnipeAllPokemon()
         {
+            if(!UserSettings.CatchSettings.Any(x => x.Snipe))
+            {
+                LogCaller(new LoggerEventArgs("No pokemon set to snipe.", LoggerTypes.Info));
+
+                return new MethodResult
+                {
+                    Message = "No pokemon set to snipe"
+                };
+            }
+
             MethodResult<PokeSniperObject> pokeSniperResult = RequestPokeSniperRares();
 
             if(!pokeSniperResult.Success)
@@ -66,9 +63,7 @@ namespace PokemonGoGUI.GoManager
                 };
             }
 
-            List<PokeSniperResult> pokemonToSnipe = pokeSniperResult.Data.results.Where(x => x.id > _lastPokeSniperId && PokemonWithinCatchSettings(x.PokemonId, true) && x.DespawnTime >= DateTime.Now.AddSeconds(30)).ToList();
-
-            _lastPokeSniperId = pokeSniperResult.Data.results.OrderByDescending(x => x.id).First().id;
+            List<PokeSniperResult> pokemonToSnipe = pokeSniperResult.Data.results.Where(x => x.id > _lastPokeSniperId && PokemonWithinCatchSettings(x.PokemonId, true) && x.DespawnTime >= DateTime.Now.AddSeconds(30)).TakeLast(UserSettings.MaxPokemonPerSnipe).ToList();
 
             if(pokemonToSnipe.Count == 0) 
             {
@@ -80,21 +75,53 @@ namespace PokemonGoGUI.GoManager
                 };
             }
 
+            _lastPokeSniperId = pokemonToSnipe.OrderByDescending(x => x.id).First().id;
+
             LogCaller(new LoggerEventArgs(String.Format("Sniping {0} pokemon", pokemonToSnipe.Count), LoggerTypes.Info));
 
-            await Task.Delay(7000);
+            await Task.Delay(CalculateDelay(UserSettings.DelayBetweenSnipes, UserSettings.BetweenSnipesDelayRandom));
+
+            bool hasPokeballs = HasPokeballsLeft();
+            int failedAttempts = 0;
+            int maxFailedAttempted = 3;
 
             //Long running, so can't let this continue
-            while(pokemonToSnipe.Any() && IsRunning)
+            while(pokemonToSnipe.Any() && hasPokeballs && failedAttempts < maxFailedAttempted && IsRunning)
             {
                 PokeSniperResult pokemon = pokemonToSnipe.First();
                 pokemonToSnipe.Remove(pokemon);
 
-                await CaptureSnipePokemon(pokemon.Latitude, pokemon.Longitude, pokemon.PokemonId);
+                if(pokemon.Latitude < -90 || pokemon.Latitude > 90 || pokemon.Longitude < -180 || pokemon.Longitude > 180)
+                {
+                    LogCaller(new LoggerEventArgs(String.Format("Invalid location {0}, {1} given for {2}. Skipping", pokemon.Latitude, pokemon.Longitude, pokemon.name), LoggerTypes.Info));
 
-                await Task.Delay(7000);
+                    continue;
+                }
+
+
+                MethodResult<bool> captureResult = await CaptureSnipePokemon(pokemon.Latitude, pokemon.Longitude, pokemon.PokemonId);
+
+                await Task.Delay(CalculateDelay(UserSettings.DelayBetweenSnipes, UserSettings.BetweenSnipesDelayRandom));
+                
+                if(!captureResult.Success)
+                {
+                    ++failedAttempts;
+                }
 
                 pokemonToSnipe = pokemonToSnipe.Where(x => PokemonWithinCatchSettings(x.PokemonId) && x.DespawnTime >= DateTime.Now.AddSeconds(30)).ToList();
+
+                if(_fleeingPokemonResponses >= _fleeingPokemonUntilBan)
+                {
+                    LogCaller(new LoggerEventArgs("Too many fleeing pokemon. Will stop sniping ...", LoggerTypes.Warning));
+                    break;
+                }
+
+                hasPokeballs = HasPokeballsLeft();
+
+                if(!hasPokeballs)
+                {
+                    LogCaller(new LoggerEventArgs("No pokeballs remaining. Done sniping", LoggerTypes.Warning));
+                }
             }
 
             return new MethodResult
@@ -103,20 +130,70 @@ namespace PokemonGoGUI.GoManager
             };
         }
 
-        private async Task<MethodResult> CaptureSnipePokemon(double latitude, double longitude, PokemonId pokemon)
+        public async Task<MethodResult> ManualSnipe(double latitude, double longitude, PokemonId pokemon)
+        {
+            if (State != Enums.BotState.Stopped)
+            {
+                Pause();
+            }
+            else
+            {
+                MethodResult result = await UpdateDetails();
+
+                if(!result.Success)
+                {
+                    return result;
+                }
+            }
+
+            await Task.Delay(CalculateDelay(UserSettings.GeneralDelay, UserSettings.GeneralDelayRandom));
+
+            //Wait for actual pause ...
+            //Using pausing to prevent infinite loop. Possible to manual exit this by stopping/starting
+            while(State == Enums.BotState.Pausing || State == Enums.BotState.Stopping)
+            {
+                await Task.Delay(100);
+            }
+
+            //Make sure it's a paused state or stopped. 
+            if(State != Enums.BotState.Paused && State != Enums.BotState.Stopped)
+            {
+                LogCaller(new LoggerEventArgs("Manual intervention on pausing. Aborting snipe", LoggerTypes.Info));
+
+                return new MethodResult();
+            }
+
+            //All good
+            await CaptureSnipePokemon(latitude, longitude, pokemon);
+
+            if (State == Enums.BotState.Paused)
+            {
+                UnPause();
+            }
+
+            return new MethodResult
+            {
+                Success = true
+            };
+        }
+
+        private async Task<MethodResult<bool>> CaptureSnipePokemon(double latitude, double longitude, PokemonId pokemon)
         {
             LogCaller(new LoggerEventArgs(String.Format("Sniping {0} at location {1}, {2}", pokemon, latitude, longitude), LoggerTypes.Info));
 
-            GeoCoordinate originalLocation = new GeoCoordinate(_client.CurrentLatitude, _client.CurrentLongitude, _client.CurrentAltitude);
+            GeoCoordinate originalLocation = new GeoCoordinate(_client.ClientSession.Player.Latitude, _client.ClientSession.Player.Longitude);
 
             //Update location
-            MethodResult result = await UpdateLocation(new GeoCoordinate(latitude, longitude, _client.CurrentAltitude));
+            MethodResult result = await UpdateLocation(new GeoCoordinate(latitude, longitude));
 
-            await Task.Delay(800);
+            await Task.Delay(CalculateDelay(UserSettings.GeneralDelay, UserSettings.GeneralDelayRandom));
 
             if(!result.Success)
             {
-                return result;
+                //Just attempt it to prevent anything bad.
+                await UpdateLocation(originalLocation);
+
+                return new MethodResult<bool>();
             }
 
             //Get catchable pokemon
@@ -124,13 +201,15 @@ namespace PokemonGoGUI.GoManager
 
             if(!pokemonResult.Success)
             {
-                return new MethodResult
+                await UpdateLocation(originalLocation);
+
+                return new MethodResult<bool>
                 {
                     Message = pokemonResult.Message
                 };
             }
 
-            await Task.Delay(800);
+            await Task.Delay(CalculateDelay(UserSettings.GeneralDelay, UserSettings.GeneralDelayRandom));
 
             MapPokemon pokemonToSnipe = pokemonResult.Data.FirstOrDefault(x => x.PokemonId == pokemon);
 
@@ -140,7 +219,7 @@ namespace PokemonGoGUI.GoManager
 
                 await UpdateLocation(originalLocation);
 
-                return new MethodResult
+                return new MethodResult<bool>
                 {
                     Message = "Pokemon not found"
                 };
@@ -149,7 +228,7 @@ namespace PokemonGoGUI.GoManager
             //Encounter
             MethodResult<EncounterResponse> eResponseResult = await EncounterPokemon(pokemonToSnipe);
 
-            await Task.Delay(800);
+            await Task.Delay(CalculateDelay(UserSettings.GeneralDelay, UserSettings.GeneralDelayRandom));
 
             if(!eResponseResult.Success)
             {
@@ -158,25 +237,33 @@ namespace PokemonGoGUI.GoManager
                 //Failed, update location back
                 await UpdateLocation(originalLocation);
 
-                return new MethodResult
+                return new MethodResult<bool>
                 {
                     Message = eResponseResult.Message
                 };
             }
 
             //Update location back
-            MethodResult locationResult = await RepeatAction(() => UpdateLocation(originalLocation), 2);
+            MethodResult locationResult = await UpdateLocation(originalLocation);
 
             if(!locationResult.Success)
             {
-                return locationResult;
+                return new MethodResult<bool>();
             }
 
             //Catch pokemon
             MethodResult catchResult = await CatchPokemon(eResponseResult.Data, pokemonToSnipe); //Handles logging
 
 
-            return catchResult;
+            if(catchResult.Success)
+            {
+                return new MethodResult<bool>
+                {
+                    Success = true
+                };
+            }
+
+            return new MethodResult<bool>();
         }
     }
 }

@@ -1,10 +1,4 @@
-﻿using System;
-using System.Collections.Generic;
-using System.Linq;
-using System.Text;
-using System.Threading.Tasks;
-
-namespace PokemonGoGUI.Enums
+﻿namespace PokemonGoGUI.Enums
 {
     public enum BotState
     {
@@ -12,6 +6,8 @@ namespace PokemonGoGUI.Enums
         Stopping,
         Starting,
         Running,
-        Waiting
+        Waiting,
+        Pausing,
+        Paused
     };
 }

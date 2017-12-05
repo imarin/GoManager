@@ -1,8 +1,9 @@
-﻿using POGOProtos.Enums;
+﻿using Google.Protobuf;
+using POGOProtos.Enums;
+using POGOProtos.Networking.Requests;
+using POGOProtos.Networking.Requests.Messages;
 using POGOProtos.Networking.Responses;
 using POGOProtos.Settings.Master;
-using PokemonGo.RocketAPI;
-using PokemonGo.RocketAPI.Helpers;
 using PokemonGoGUI.Extensions;
 using PokemonGoGUI.GoManager.Models;
 using PokemonGoGUI.Models;
@@ -10,16 +11,77 @@ using System;
 using System.Collections.Generic;
 using System.IO;
 using System.Linq;
-using System.Text;
 using System.Threading.Tasks;
 
 namespace PokemonGoGUI.GoManager
 {
     public partial class Manager
     {
+        private int CalculateDelay(int baseDelay, int offset)
+        {
+            lock(_rand)
+            {
+                int maxOffset = offset * 2;
+
+                int currentOffset = _rand.Next(0, maxOffset + 1) - offset;
+
+                int returnDelay = baseDelay + currentOffset;
+
+                //API throttles
+                if(returnDelay <= 500)
+                {
+                    return 500;
+                }
+
+                return returnDelay;
+            }
+        }
+
+        public MethodResult<AccountExportModel> GetAccountExport()
+        {
+            if(Stats == null)
+            {
+                LogCaller(new LoggerEventArgs(String.Format("No stats found for {0}. Please update details", UserSettings.PtcUsername), LoggerTypes.Warning));
+
+                return new MethodResult<AccountExportModel>();
+            }
+
+            if (AllItems == null || AllItems.Count == 0)
+            {
+                LogCaller(new LoggerEventArgs(String.Format("No items found for {0}. Please update details", UserSettings.PtcUsername), LoggerTypes.Warning));
+
+                return new MethodResult<AccountExportModel>();
+            }
+
+            if (Pokedex == null || Pokedex.Count == 0)
+            {
+                LogCaller(new LoggerEventArgs(String.Format("No pokedex found for {0}. Please update details", UserSettings.PtcUsername), LoggerTypes.Warning));
+
+                return new MethodResult<AccountExportModel>();
+            }
+
+            AccountExportModel exportModel = new AccountExportModel
+            {
+                Level = Stats.Level,
+                Type = UserSettings.AuthType.ToString(),
+                Username = UserSettings.PtcUsername,
+                Password = UserSettings.PtcPassword,
+                Pokedex = Pokedex.Select(x => new PokedexEntryExportModel(x)).ToList(),
+                Pokemon = Pokemon.Select(x => new PokemonDataExportModel(x, CalculateIVPerfection(x).Data)).ToList(),
+                Items = Items.Select(x => new ItemDataExportModel(x)).ToList(),
+                Eggs = Eggs.Select(x => new EggDataExportModel(x)).ToList()
+            };
+
+            return new MethodResult<AccountExportModel>
+            {
+                Data = exportModel,
+                Success = true
+            };
+        }
+
         public async Task<MethodResult<Dictionary<PokemonId, PokemonSettings>>> GetItemTemplates()
         {
-            if (PokeSettings != null)
+            if (PokeSettings != null && PokeSettings.Count != 0)
             {
                 return new MethodResult<Dictionary<PokemonId, PokemonSettings>>
                 {
@@ -44,34 +106,60 @@ namespace PokemonGoGUI.GoManager
                     }
                 }
 
-                DownloadItemTemplatesResponse templates = await _client.Download.GetItemTemplates();
-                Dictionary<PokemonId, PokemonSettings> pokemonSettings = new Dictionary<PokemonId, PokemonSettings>();
-
-                foreach (DownloadItemTemplatesResponse.Types.ItemTemplate template in templates.ItemTemplates)
+                var response = await _client.ClientSession.RpcClient.SendRemoteProcedureCallAsync(new Request
                 {
-                    if(template.PlayerLevel != null)
+                    RequestType = RequestType.DownloadItemTemplates,
+                    RequestMessage = new DownloadItemTemplatesMessage
                     {
-                        LevelSettings = template.PlayerLevel;
+                        //PageOffset
+                        //PageTimestamp
+                        //Paginate
+                    }.ToByteString()
+                });
 
-                        continue;
+                DownloadItemTemplatesResponse downloadItemTemplatesResponse = null;
+
+                try
+                {
+                    downloadItemTemplatesResponse = DownloadItemTemplatesResponse.Parser.ParseFrom(response);
+                    Dictionary<PokemonId, PokemonSettings> pokemonSettings = new Dictionary<PokemonId, PokemonSettings>();
+
+                    foreach (DownloadItemTemplatesResponse.Types.ItemTemplate template in downloadItemTemplatesResponse.ItemTemplates)
+                    {
+                        if (template.PlayerLevel != null)
+                        {
+                            LevelSettings = template.PlayerLevel;
+
+                            continue;
+                        }
+
+                        if (template.PokemonSettings == null)
+                        {
+                            continue;
+                        }
+
+                        pokemonSettings.Add(template.PokemonSettings.PokemonId, template.PokemonSettings);
                     }
 
-                    if (template.PokemonSettings == null)
-                    {
-                        continue;
-                    }
+                    PokeSettings = pokemonSettings;
 
-                    pokemonSettings.Add(template.PokemonSettings.PokemonId, template.PokemonSettings);
+                    return new MethodResult<Dictionary<PokemonId, PokemonSettings>>
+                    {
+                        Data = pokemonSettings,
+                        Message = "Success",
+                        Success = true
+                    };
                 }
-
-                PokeSettings = pokemonSettings;
-
-                return new MethodResult<Dictionary<PokemonId, PokemonSettings>>
+                catch (Exception ex)
                 {
-                    Data = pokemonSettings,
-                    Message = "Success",
-                    Success = true
-                };
+                    if (response.IsEmpty)
+                        LogCaller(new LoggerEventArgs("Failed to get setting templates", LoggerTypes.Exception, ex));
+
+                    return new MethodResult<Dictionary<PokemonId, PokemonSettings>>
+                    {
+                        Message = "Failed to get setting templates"
+                    };
+                }
             }
             catch (Exception ex)
             {
@@ -102,10 +190,8 @@ namespace PokemonGoGUI.GoManager
                 };
             }
 
-            PokemonSettings pokemonSettings = null;
-
             //Shouldn't happen
-            if (!PokeSettings.TryGetValue(pokemon, out pokemonSettings))
+            if (!PokeSettings.TryGetValue(pokemon, out PokemonSettings pokemonSettings))
             {
                 return new MethodResult<PokemonSettings>()
                 {
@@ -167,8 +253,23 @@ namespace PokemonGoGUI.GoManager
                 settings.AccountName = UserSettings.AccountName;
                 settings.PtcPassword = UserSettings.PtcPassword;
                 settings.PtcUsername = UserSettings.PtcUsername;
+                settings.AuthType = UserSettings.AuthType;
+                settings.ProxyIP = UserSettings.ProxyIP;
+                settings.ProxyPassword = UserSettings.ProxyPassword;
+                settings.ProxyPort = UserSettings.ProxyPort;
+                settings.ProxyUsername = UserSettings.ProxyUsername;
+                settings.GroupName = UserSettings.GroupName;
 
                 UserSettings = settings;
+
+                if (!String.IsNullOrEmpty(UserSettings.DeviceBrand))
+                {
+                    UserSettings.RandomizeDevice();
+                }
+                else
+                {
+                    UserSettings.LoadDeviceSettings();
+                }
 
                 LogCaller(new LoggerEventArgs("Successfully imported config file", LoggerTypes.Info));
 
@@ -240,12 +341,16 @@ namespace PokemonGoGUI.GoManager
             UserSettings.LoadTransferSettings();
         }
 
-        /*
-        public void RestoreSniperDefaults()
+        public void RestoreDeviceDefaults()
         {
-            UserSettings.LoadSniperSettings();
-        }*/
+            UserSettings.LoadDeviceSettings();
+        }
 
+        public void RandomDeviceId()
+        {
+            UserSettings.RandomizeDevice();
+        }
+        
         public override bool Equals(object obj)
         {
             Manager tempManager = obj as Manager;
